@@ -1,14 +1,73 @@
+class MField:
+    def __init__(self, field, parent=None):
+        self.__field = field
+        self.name = field.name
+        self.model = field.model
+        self.parent = parent
+        self.class_name = field.__class__.__name__
+
+
 class MFields(object):
-    def __init__(self, fields):
-        self.fields = fields
+    def __init__(self, model):
+        self.fields = list()
+        self.fk_fields = list()
+
+        self.model = model
+
+        self.models = list()
+        self.__binding(self.model_field(model))
+        self.map = self.__map()
 
     def __getitem__(self, index):
-        fields = list()
-        for i in self.fields:
-            fields.append(i.name)
-            if i.__class__.__name__ == "ForeignKey":
-                fields.append(i.name + "_id")
-        return fields[index]
+        return list(self.map.keys())[index]
+
+    def __binding(self, fields, parent=None):
+        if not fields:
+            return
+
+        for field in fields:
+            if field.__class__.__name__ == "ForeignKey":
+                fk_mfield = MField(field, parent)
+                if parent is None:
+                    self.fields.append(fk_mfield)
+                self.__binding(self.model_field(field.related_model), fk_mfield)
+            else:
+                if parent:
+                    self.fk_fields.append(MField(field, parent))
+                else:
+                    self.fields.append(MField(field))
+
+    def __map(self):
+        _fields, _fk_fields = self.fields, self.fk_fields
+        _map = dict()
+        _map.update({field.name: field for field in self.fields})
+        _map.update({self.get_foreign_key(field).lstrip("_"): field for field in self.fk_fields})
+        return _map
+
+    def get_foreign_key(self, field):
+        if field is None:
+            return ""
+
+        return self.get_foreign_key(field.parent) + "_" + field.name
+
+    def get_mfield(self, field_name):
+        return self.map.get(field_name)
+
+    def is_foreign_key(self, field_name):
+        mfield = self.get_mfield(field_name)
+        if mfield in self.fk_fields:
+            return True
+        return False
+
+    def is_model_key(self, field_name):
+        mfield = self.get_mfield(field_name)
+        if mfield in self.fields:
+            return True
+        return False
+
+    @staticmethod
+    def model_field(model):
+        return model._meta.fields
 
 
 class XFilter:
@@ -28,15 +87,11 @@ class MFilter(XFilter):
         self.rename = dict()
         self.operate = dict()
 
-        self.fields = MFields(self.model_field(self.model))
+        self.fields = MFields(model)
 
     @staticmethod
     def do_nothing(value):
         return value
-
-    @staticmethod
-    def model_field(model):
-        return model._meta.fields
 
     @staticmethod
     def request_params(request):
@@ -71,8 +126,9 @@ class MFilter(XFilter):
         for key, value in self.params.items():
             if key in self.fields:
                 value = self.funcs.get(key, self.do_nothing)(value)
+                if self.fields.is_foreign_key(key):
+                    key = key.replace("_", "__")
                 _filter_params[key + self._get_operate(key)] = value
-
         return _filter_params
 
     # set 函数未来可能更加饱满，现（在）不封装
@@ -96,3 +152,7 @@ class MFilter(XFilter):
         else:
             self.operate = kwargs
         return self
+
+    def get_field(self, field):
+        return self.fields[field]
+
