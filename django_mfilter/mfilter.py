@@ -36,11 +36,6 @@ class MFields(object):
             if not field_array and not fk_array:
                 break
 
-            if parent and parent.model in self.binding_memo:
-                memo_model = self.binding_memo[parent.model]
-                _n = copy.copy(memo_model)
-                _n.parent = parent.parent
-
             for field in field_array:
                 mfield = MField(field, parent)
                 if mfield.class_name == "ForeignKey":
@@ -51,9 +46,6 @@ class MFields(object):
                         self.fk_fields.append(mfield)
                     else:
                         self.fields.append(mfield)
-
-            if parent:
-                self.binding_memo[parent.model] = parent
 
             new_field_array = None
             if fk_array:
