@@ -1,10 +1,15 @@
+import copy
+from collections import deque
+
+
 class MField:
     def __init__(self, field, parent=None):
-        self.__field = field
         self.name = field.name
         self.model = field.model
         self.parent = parent
         self.class_name = field.__class__.__name__
+        self.related_model = field.related_model
+        self.django_field = field
 
 
 class MFields(object):
@@ -15,53 +20,76 @@ class MFields(object):
         self.model = model
 
         self.models = list()
-        self.__binding(self.model_field(model))
+        self.binding_memo = dict()
+        self.__binding(model)
         self.map = self.__map()
 
     def __getitem__(self, index):
         return list(self.map.keys())[index]
 
-    def __binding(self, fields, parent=None):
-        if not fields:
-            return
+    def __binding(self, _field):
+        parent = None
+        field_array = self.model_field(_field)
+        fk_array = deque()
 
-        for field in fields:
-            if field.__class__.__name__ == "ForeignKey":
-                fk_mfield = MField(field, parent)
-                if parent is None:
-                    self.fields.append(fk_mfield)
-                self.__binding(self.model_field(field.related_model), fk_mfield)
-            else:
-                if parent:
-                    self.fk_fields.append(MField(field, parent))
+        while True:
+            if not field_array and not fk_array:
+                break
+
+            if parent and parent.model in self.binding_memo:
+                memo_model = self.binding_memo[parent.model]
+                _n = copy.copy(memo_model)
+                _n.parent = parent.parent
+
+            for field in field_array:
+                mfield = MField(field, parent)
+                if mfield.class_name == "ForeignKey":
+                    self.fields.append(mfield)
+                    fk_array.append((mfield, self.model_field(mfield.related_model)))
                 else:
-                    self.fields.append(MField(field))
+                    if parent:
+                        self.fk_fields.append(mfield)
+                    else:
+                        self.fields.append(mfield)
+
+            if parent:
+                self.binding_memo[parent.model] = parent
+
+            new_field_array = None
+            if fk_array:
+                parent, new_field_array = fk_array.pop()
+            field_array = new_field_array
 
     def __map(self):
         _fields, _fk_fields = self.fields, self.fk_fields
         _map = dict()
         _map.update({field.name: field for field in self.fields})
-        _map.update({self.get_foreign_key(field).lstrip("_"): field for field in self.fk_fields})
+        _map.update({self.get_foreign_key(field): field for field in self.fk_fields})
         return _map
 
-    def get_foreign_key(self, field):
-        if field is None:
-            return ""
-
-        return self.get_foreign_key(field.parent) + "_" + field.name
+    @staticmethod
+    def get_foreign_key(field):
+        _field = field
+        field_name_list = list()
+        while True:
+            field_name_list.append(_field.name)
+            if _field.parent is None:
+                break
+            _field = _field.parent
+        return "_".join(field_name_list[::-1])
 
     def get_mfield(self, field_name):
         return self.map.get(field_name)
 
     def is_foreign_key(self, field_name):
         mfield = self.get_mfield(field_name)
-        if mfield in self.fk_fields:
+        if mfield.parent:
             return True
         return False
 
     def is_model_key(self, field_name):
         mfield = self.get_mfield(field_name)
-        if mfield in self.fields:
+        if mfield.parent is None:
             return True
         return False
 
